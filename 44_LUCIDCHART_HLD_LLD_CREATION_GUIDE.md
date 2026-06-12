@@ -13,7 +13,8 @@
    - [Core Components of an LLD Doc](#core-components-of-an-lld-doc)
    - [Creating LLD Diagrams in Lucidchart](#creating-lld-diagrams-in-lucidchart)
 4. [Lucidchart Best Practices & Pro Tips](#4-lucidchart-best-practices--pro-tips)
-5. [End-to-End Example: E-Commerce Platform](#5-end-to-end-example-e-commerce-platform)
+5. [Deep Dive: Redis Architecture & Integration](#5-deep-dive-redis-architecture--integration)
+6. [End-to-End Example: E-Commerce Platform](#6-end-to-end-example-e-commerce-platform)
    - [HLD Implementation](#hld-implementation)
    - [LLD Implementation](#lld-implementation)
 
@@ -139,7 +140,75 @@ Low-Level Design provides the microscopic details needed by developers to write 
 
 ---
 
-## 5. End-to-End Example: E-Commerce Platform
+## 5. Deep Dive: Redis Architecture & Integration
+
+When designing systems (both HLD and LLD), caching is a fundamental component for performance, and Redis is the industry standard. This section details how to think about and diagram Redis integrations at different scales, particularly focusing on AWS.
+
+### Redis Variants and When to Use What
+
+1. **Standalone / Single Node Redis:**
+   - **What it is:** A single instance of Redis. All reads and writes go to this one node.
+   - **Use Case:** Small projects, development environments, or ephemeral data where data loss is acceptable.
+   - **Diagramming (Lucidchart):** A single Redis cylinder icon connected directly to your application service.
+
+2. **Redis Replication (Master-Replica):**
+   - **What it is:** One Master node for writes, and one or more Replica nodes for reads. Provides read scalability and basic data redundancy.
+   - **Use Case:** Read-heavy applications that need higher throughput but can tolerate some downtime during master failover.
+   - **Diagramming (Lucidchart):** One "Master" cylinder, connected via dashed lines (replication) to several "Replica" cylinders. The App Service points writes to the Master and reads to the Replicas.
+
+3. **Redis Sentinel:**
+   - **What it is:** Adds high availability (HA) to the Master-Replica setup by automatically promoting a replica if the master fails.
+   - **Use Case:** Systems needing automatic failover and high availability without partitioning data across multiple masters.
+   - **Diagramming (Lucidchart):** Same as Master-Replica, but add a box labeled "Sentinel Quorum" monitoring the nodes.
+
+4. **Redis Cluster:**
+   - **What it is:** Automatically partitions (shards) data across multiple master nodes. Each master can have its own replicas.
+   - **Use Case:** Large-scale applications where the dataset is larger than a single machine's RAM, requiring both read/write scalability and high availability.
+   - **Diagramming (Lucidchart):** Group multiple Master-Replica pairs inside a container labeled "Redis Cluster". The App Service connects to the cluster as a whole.
+
+5. **AWS Managed Services:**
+   - **Amazon ElastiCache for Redis:** A fully managed in-memory data store. You can configure it as standalone, cluster-mode disabled (Master-Replica), or cluster-mode enabled (Sharded). Use this for high-performance caching, session stores, and leaderboards.
+   - **Amazon MemoryDB for Redis:** A durable, in-memory database built for Redis. Uses a multi-AZ transaction log to ensure zero data loss. Use this when Redis acts as your *primary database*, not just a cache.
+
+### Small-Scale vs. Enterprise Integration
+
+**Small-Scale Integration:**
+- **Architecture:** Usually a single ElastiCache node (t3/t4g micro instances) or a simple Master-Replica setup.
+- **HLD Diagram:**
+  - Place a standard Redis icon in the same VPC/Subnet as the Application Server.
+  - Draw a simple bi-directional arrow between the App Server and Redis (labeled "Cache Aside").
+
+**Enterprise Integration (using AWS):**
+- **Architecture:** Multi-AZ Amazon ElastiCache (Cluster Mode Enabled) with Auto-Scaling, or Amazon MemoryDB for durability. It operates behind internal load balancers or relies on smart client routing to cluster endpoints. It usually involves strict Security Groups, KMS encryption, and IAM integration.
+- **HLD Diagram:**
+  - Create a "Data Subnet" container spanning multiple Availability Zones (AZs).
+  - Place an ElastiCache node in each AZ. Group them in an "ElastiCache Cluster" container.
+  - Draw the Application Service (in its own container) connecting to the ElastiCache Configuration Endpoint (or specific nodes depending on the client library).
+  - Add text notes for "KMS Encrypted" or "Multi-AZ Failover".
+
+### LLD Diagramming for Redis
+
+When moving from HLD to LLD, your Redis design becomes much more specific:
+
+1. **Key/Data Modeling (Text/Table):**
+   - LLDs rarely use traditional ERDs for Redis. Instead, document the key structures and data types used.
+   - *Example:*
+     - Key Pattern: `user:{userId}:session` | Type: Hash | TTL: 24 hours | Fields: `token`, `lastActive`.
+     - Key Pattern: `product:{productId}:views` | Type: HyperLogLog | TTL: None.
+
+2. **Sequence Diagram (Cache-Aside Pattern):**
+   - Show exactly how the application interacts with Redis vs. the primary database.
+   - **Flow:**
+     1. App Service -> Redis: `GET key`
+     2. Redis -> App Service: `(nil)` (Cache Miss)
+     3. App Service -> Database: `SELECT query`
+     4. Database -> App Service: `Result`
+     5. App Service -> Redis: `SET key Result EX 3600`
+     6. App Service -> Client: `Response`
+
+---
+
+## 6. End-to-End Example: E-Commerce Platform
 
 Let's walk through documenting an E-Commerce platform handling high traffic.
 
